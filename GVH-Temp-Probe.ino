@@ -15,7 +15,6 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <OSCMessage.h>
-#include <Bounce2.h>
 #include "elapsedMillis.h"
 #include <OneWire.h>
 #include <DallasTemperature.h>
@@ -33,6 +32,8 @@ const char* networkPswd = "CrimpleLump52#";
 const char * udpAddress = "10.32.70.24";
 const int udpPort = 9000;
 
+const unsigned int localPort = 6667;
+
 // const char * udpAddress = "10.32.16.123";
 // const int udpPort = 6543;
 
@@ -40,68 +41,106 @@ const int udpPort = 9000;
 boolean connected = false;
 
 //The udp library class
-WiFiUDP udp;
-
-bool buttonState = false;
+WiFiUDP Udp;
 
 const int led = LED_BUILTIN;
-const int button = A0;
+
+
+// Data wire is plugged into port 2 on the Arduino
+#define ONE_WIRE_BUS A0
+
+// Setup a oneWire instance to communicate with any OneWire devices (not just Maxim/Dallas temperature ICs)
+OneWire oneWire(ONE_WIRE_BUS);
+
+// Pass our oneWire reference to Dallas Temperature. 
+DallasTemperature sensors(&oneWire);
 
 
 elapsedMillis repeatTriggerTimer;
 long unsigned int repeatTriggerTime = 15000; // 15 seconds
 
-Bounce2::Button eventButton = Bounce2::Button();
 
-void setup(){
+OSCErrorCode error;
+
+
+void setup()
+{
   // Initilize hardware serial:
   Serial.begin(115200);
-  delay(2);
+  delay(10);
 
-  eventButton.attach(button, INPUT_PULLUP);
-  eventButton.interval(50);
-  eventButton.setPressedState(LOW);
+  sensors.begin();
 
-  pinMode(led, OUTPUT);
-  digitalWrite(led, 0);
+  delay(10000);
   
   //Connect to the WiFi network
   connectToWiFi(networkName, networkPswd);
 
+  Udp.begin(localPort);
+
   repeatTriggerTimer = repeatTriggerTime; // allow for button push immediately after boot
 }
 
-void loop(){
+void loop() {
 
-  if (repeatTriggerTimer < repeatTriggerTime) {
-    delay(10);
+  checkForOSCMessage();
+
+  // sensors.requestTemperatures(); // Send the command to get temperatures
+  // float tempF = sensors.getTempFByIndex(0);
+
+  // // Check if reading was successful
+  // if(tempC == DEVICE_DISCONNECTED_C) {
+  //   DEBUG_PRINTLN("Error: Could not read temperature data");
+  // }
+
+  // DEBUG_PRINT("Temperature for DS1820 is: ");
+  // DEBUG_PRINTLN(tempF);
+
+  delay(10);
+}
+
+
+void checkForOSCMessage() {
+  OSCMessage msg;
+  int size = Udp.parsePacket();
+
+  if (size > 0) {
+    DEBUG_PRINTLN("OSC Received!");
+    while (size--) {
+      msg.fill(Udp.read());
+    }
+    if (!msg.hasError()) {
+      msg.dispatch("/read_temp", echoTemp);
+    } else {
+      error = msg.getError();
+      Serial.print("error: ");
+      Serial.println(error);
+    }
+  }
+}
+
+
+void echoTemp(OSCMessage &msg) {
+
+  sensors.requestTemperatures(); // Send the command to get temperatures
+  float tempF = sensors.getTempFByIndex(0);
+
+  // Check if reading was successful
+  if(tempF == DEVICE_DISCONNECTED_C) {
+    DEBUG_PRINTLN("Error: Could not read temperature data");
     return;
   }
 
-  eventButton.update();
+  DEBUG_PRINT("Temperature for DS1820 is: ");
+  DEBUG_PRINTLN(tempF);
 
-  if (eventButton.fell() && connected) {
-
-    eventTriggered();
-    repeatTriggerTimer = 0;
-    digitalWrite(led, HIGH); 
-  }
-  else if (eventButton.rose()) {
-    digitalWrite(led, LOW); 
-  }
-
-  //Wait for 1 second
-  delay(1);
-}
-
-void eventTriggered() {
-  Serial.println("Event Triggered");
-  OSCMessage msg("/foh/zallway/specialtrigger");
-  udp.beginPacket(udpAddress, udpPort);
-  msg.send(udp); // send the bytes to the SLIP stream
-  udp.endPacket(); // mark the end of the OSC Packet
+  Udp.beginPacket(Udp.remoteIP(), udpPort);
+  msg.add(tempF);
+  msg.send(Udp); // send the bytes to the SLIP stream
+  Udp.endPacket(); // mark the end of the OSC Packet
   msg.empty(); // free space occupied by message
 }
+
 
 void connectToWiFi(const char * ssid, const char * pwd){
   Serial.println("Connecting to WiFi network: " + String(ssid));
@@ -122,15 +161,15 @@ void WiFiEvent(WiFiEvent_t event){
     switch(event) {
       case ARDUINO_EVENT_WIFI_STA_GOT_IP:
           //When connected set 
-          Serial.print("WiFi connected! IP address: ");
-          Serial.println(WiFi.localIP());  
+          DEBUG_PRINT("WiFi connected! IP address: ");
+          DEBUG_PRINTLN(WiFi.localIP());  
           //initializes the UDP state
           //This initializes the transfer buffer
-          udp.begin(WiFi.localIP(),udpPort);
+          Udp.begin(WiFi.localIP(),localPort);
           connected = true;
           break;
       case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
-          Serial.println("WiFi lost connection");
+          DEBUG_PRINTLN("WiFi lost connection");
           connected = false;
           break;
       default: break;
