@@ -47,17 +47,21 @@ const int led = LED_BUILTIN;
 
 
 // Data wire is plugged into port 2 on the Arduino
-#define ONE_WIRE_BUS A0
+#define ONE_WIRE_BUS_A A0
+#define ONE_WIRE_BUS_B A1
 
 // Setup a oneWire instance to communicate with any OneWire devices (not just Maxim/Dallas temperature ICs)
-OneWire oneWire(ONE_WIRE_BUS);
+OneWire oneWireA(ONE_WIRE_BUS_A);
+OneWire oneWireB(ONE_WIRE_BUS_B);
 
 // Pass our oneWire reference to Dallas Temperature. 
-DallasTemperature sensors(&oneWire);
+DallasTemperature sensorsA(&oneWireA);
+DallasTemperature sensorsB(&oneWireB);
 
 
 elapsedMillis repeatTriggerTimer;
-long unsigned int repeatTriggerTime = 15000; // 15 seconds
+long unsigned int repeatTriggerTime = 1000; // 15 seconds
+bool toggle = false;
 
 
 OSCErrorCode error;
@@ -69,16 +73,16 @@ void setup()
   Serial.begin(115200);
   delay(10);
 
-  sensors.begin();
+  sensorsA.begin();
+  sensorsB.begin();
 
-  delay(10000);
+  delay(5000);
   
   //Connect to the WiFi network
   connectToWiFi(networkName, networkPswd);
 
   Udp.begin(localPort);
 
-  repeatTriggerTimer = repeatTriggerTime; // allow for button push immediately after boot
 }
 
 void loop() {
@@ -110,7 +114,9 @@ void checkForOSCMessage() {
       msg.fill(Udp.read());
     }
     if (!msg.hasError()) {
-      msg.dispatch("/read_temp", echoTemp);
+      msg.dispatch("/read_temp", echoTempA);
+      msg.dispatch("/read_temp_A", echoTempA);
+      msg.dispatch("/read_temp_B", echoTempB);
     } else {
       error = msg.getError();
       Serial.print("error: ");
@@ -120,10 +126,36 @@ void checkForOSCMessage() {
 }
 
 
-void echoTemp(OSCMessage &msg) {
+void echoTempA(OSCMessage &msg) {
 
-  sensors.requestTemperatures(); // Send the command to get temperatures
-  float tempF = sensors.getTempFByIndex(0);
+  DEBUG_PRINTLN("Temp A requested");
+
+  sensorsA.requestTemperatures(); // Send the command to get temperatures
+  float tempF = sensorsA.getTempFByIndex(0);
+
+  // Check if reading was successful
+  if(tempF == DEVICE_DISCONNECTED_C) {
+    DEBUG_PRINTLN("Error: Could not read temperature data");
+    return;
+  }
+
+  DEBUG_PRINT("Temperature for DS1820 is: ");
+  DEBUG_PRINTLN(tempF);
+
+  Udp.beginPacket(Udp.remoteIP(), udpPort);
+  msg.add(tempF);
+  msg.send(Udp); // send the bytes to the SLIP stream
+  Udp.endPacket(); // mark the end of the OSC Packet
+  msg.empty(); // free space occupied by message
+}
+
+
+void echoTempB(OSCMessage &msg) {
+
+  DEBUG_PRINTLN("Temp B requested");
+
+  sensorsB.requestTemperatures(); // Send the command to get temperatures
+  float tempF = sensorsB.getTempFByIndex(0);
 
   // Check if reading was successful
   if(tempF == DEVICE_DISCONNECTED_C) {
