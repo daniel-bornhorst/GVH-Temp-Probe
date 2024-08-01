@@ -63,6 +63,9 @@ elapsedMillis repeatTriggerTimer;
 long unsigned int repeatTriggerTime = 1000; // 15 seconds
 bool toggle = false;
 
+elapsedMillis reconnectTimer;
+long unsigned int reconnectInterval = 10000;
+
 
 OSCErrorCode error;
 
@@ -88,6 +91,12 @@ void setup()
 void loop() {
 
   checkForOSCMessage();
+
+  if (!connected && reconnectTimer >= reconnectInterval) {
+    WiFi.disconnect();
+    WiFi.reconnect();
+    reconnectTimer = 0;
+  }
 
   // sensors.requestTemperatures(); // Send the command to get temperatures
   // float tempF = sensors.getTempFByIndex(0);
@@ -173,6 +182,14 @@ void echoTempB(OSCMessage &msg) {
   msg.empty(); // free space occupied by message
 }
 
+void sendReconnectedOSC() {
+  OSCMessage msg("/reconnected");
+  Udp.beginPacket(Udp.remoteIP(), udpPort);
+  msg.send(Udp); // send the bytes to the SLIP stream
+  Udp.endPacket(); // mark the end of the OSC Packet
+  msg.empty(); // free space occupied by message
+}
+
 
 void connectToWiFi(const char * ssid, const char * pwd){
   Serial.println("Connecting to WiFi network: " + String(ssid));
@@ -199,10 +216,13 @@ void WiFiEvent(WiFiEvent_t event){
           //This initializes the transfer buffer
           Udp.begin(WiFi.localIP(),localPort);
           connected = true;
+          sendReconnectedOSC();
           break;
       case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
           DEBUG_PRINTLN("WiFi lost connection");
+          //WiFi.setAutoReconnect(true);
           connected = false;
+          reconnectTimer = 0;
           break;
       default: break;
     }
